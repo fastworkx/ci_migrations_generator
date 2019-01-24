@@ -13,7 +13,7 @@ if (!defined('BASEPATH'))
  * @version 0.1.0 Beta
  *
  */
-class Generator {
+class Sqltoci {
 
     var $db_user;
     var $db_pass;
