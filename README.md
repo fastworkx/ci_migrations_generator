@@ -20,15 +20,15 @@ When all goes well it will create a file under migrations called 001_create_base
 ```php
     function make_base(){
 
-        $this->load->library('ci_migrations_generator/Generator');
+        $this->load->library('ci_migrations_generator/Sqltoci');
 
         // All Tables:
 
-        $this->generator->generate();
+        $this->sqltoci->generate();
 
         //Single Table:
 
-        $this->generator->generate('table');
+        $this->sqltoci->generate('table');
 
     }
 ```   
