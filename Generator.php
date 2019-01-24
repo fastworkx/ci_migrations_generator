@@ -4,13 +4,13 @@ if (!defined('BASEPATH'))
     exit('No direct script access allowed');
 
 /**
- * Vpx Migration Library
+ * CI Migrations Generator Library
  *
  * Create a base file for migrations to start off with;
  *
- * @author Liaan vd Merwe <info@vpx.co.za>
+ * @author Fastworkx S.R.L. <development@fastworkx.com>
  * @license Free to use and abuse
- * @version 0.4 Beta
+ * @version 0.1.0 Beta
  *
  */
 class Generator {
