@@ -82,3 +82,5 @@ class Migration_create_base extends CI_Migration {
 }
 ```
 
+It's an improve of repository ``liaan/codeigniter_migration_base_generation``;
+

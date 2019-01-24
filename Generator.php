@@ -215,7 +215,7 @@ class Generator {
             $key = '';
             $up .= PHP_EOL."\n\t\t" . '## Create Table ' . $table . "\n";
             $up .= "\t\t" . '$this->dbforge->add_field(array(';
-            var_dump( $columns );
+
             foreach ($columns as $column)
             {
                 $column_type = '';
