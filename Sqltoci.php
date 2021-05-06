@@ -260,7 +260,7 @@ class Sqltoci {
                 }
                 
                 //si tiene DEAFAULT generar  sql texto plano para escapar el strin en caso e.g. CURRENT_TIMESTAMP
-                if( $column_default == 'CURRENT_TIMESTAMP' )
+                if( $column_default == 'CURRENT_TIMESTAMP' or $column_default == 'current_timestamp()')
                 {
                     $up .= PHP_EOL."\t\t\t"."'`$column[Field]` $column[Type] " . ($column['Null'] == 'NO' ? 'NOT NULL' : 'NULL') .
                     (
