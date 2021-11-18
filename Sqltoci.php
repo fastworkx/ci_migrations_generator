@@ -28,6 +28,10 @@ class Sqltoci {
     var $path = 'migrations';
     var $skip_tables = array();
     var $add_view = false;
+    var $stmts = [
+        'up' => [],
+        'down' => []
+    ];
 
     /*
      * defaults;
@@ -151,6 +155,7 @@ class Sqltoci {
             $this->tables = is_array($tables) ? $tables : explode(',', $tables);
         }
 
+
         ## if write file, check if we can
         if ($this->write_file)
         {
@@ -177,8 +182,9 @@ class Sqltoci {
                 return;
             }
 
-            //$file_path = $path . '/001_create_' . $table . '.php';
-            $file_path = $path . '/001_create_base.php';
+            $file_sufix = $this->getMigrationType() == "timestamp" ? date('YmdHis', now()) : "001";
+            echo "Version = {$file_sufix} (change the version in \"config/migration.php\" file) <br>";
+            $file_path = $path . "/{$file_sufix}_create_base.php";
             $file = fopen($file_path, 'w+');
 
             if (!$file)
@@ -276,7 +282,7 @@ class Sqltoci {
                     "\t\t\t\t".'\'type\' => \'' . $column_type . '\','.PHP_EOL.
                     ( 
                         $column_constraint ? 
-                        "\t\t\t\t".'\'constraint\' => ' . $column_constraint . ','.PHP_EOL :
+                        "\t\t\t\t".'\'constraint\' => "' . $column_constraint . '",'.PHP_EOL :
                         ''
                     ).
                     ( 
@@ -287,7 +293,7 @@ class Sqltoci {
                     "\t\t\t\t".'\'null\' => ' . $column_null . ','.PHP_EOL.
                     ( 
                         $column_default != NULL ? 
-                        "\t\t\t\t".'\'default\' => \'' . $column_default . '\','.PHP_EOL :
+                        "\t\t\t\t".'\'default\' => ' . (is_numeric($column_default) ? $column_default : "\"{$column_default}\"") . ','.PHP_EOL :
                         ''
                     ).
                     ( 
@@ -303,7 +309,8 @@ class Sqltoci {
             }
 
             $up .= PHP_EOL."\t\t));". PHP_EOL.$key.PHP_EOL."\t\t" . '$this->dbforge->create_table("' . $table . '", TRUE);' . PHP_EOL;
-
+            $up = str_replace("\"b'0'\"",0,$up);
+            $up = str_replace("\"b'1'\"",1,$up);
             if (isset($engines['Engine']) and $engines['Engine'])
                 $up .= "\t\t" . '$this->db->query(\'ALTER TABLE  ' . $this->ci->db_master->protect_identifiers($table) .
                         ' ENGINE = ' . $engines['Engine']. '\');';
@@ -315,7 +322,27 @@ class Sqltoci {
             /* clear some mem */
             $q->free_result();
         }
+        ### generating routines queries (procedures,functions, triggers) ###
+        $this->generateKeys();
+        $this->generateQueriesArray();
+        $queries = $this->stmts;
+        if ( count($queries['up']) != 0 )
+        {
+            $up     .=  PHP_EOL."\n\t\t" . '## Create Routines' . "\n";
+            $up     .=  "\t\t". '$queries = '."[";
+            foreach ($queries['up'] as $query) {
+                $up.= "\n\t\t\t'{$query}',";
+            }
+            $up     .= "\n\t\t]; \n\t\t".'foreach($queries as $query) $this->db->query($query);'."\n";
+            ### Dropping routines
 
+            $down     .=  PHP_EOL."\n\t\t" . '## Dropping Routines' . "\n";
+            $down     .=  "\t\t". '$queries = '."[";
+            foreach ($queries['down'] as $query) {
+                $down.= "\n\t\t\t'{$query}',";
+            }
+            $down     .= "\n\t\t]; \n\t\t".'foreach($queries as $query) $this->db->query($query);'."\n";
+        }
         ### generate the text ##
         $return .= '<?php ';
         $return .= 'defined(\'BASEPATH\') OR exit(\'No direct script access allowed\');' . "\n\n";
@@ -343,6 +370,96 @@ class Sqltoci {
         }
     }
 
+     /**
+     * generateQueriesArray
+     *  generate the queries needed with the procedures, functions and triggers
+     * @return null
+     */
+    private function generateQueriesArray()
+    {
+        //GET FUNCTIONS, PROCEDURES AND TRIGGERS
+        $queryProcedures = $this->ci->db_master->query('show procedure status where db = (SELECT DATABASE())');
+        $queryFunctions = $this->ci->db_master->query('show function status where db = (SELECT DATABASE())');
+        $queryTriggers = $this->ci->db_master->query('show triggers');
+
+        //RETURN EMPTY ARRAY IF NOTHING FOUND
+        if ($queryProcedures->num_rows() == 0 && $queryFunctions->num_rows() == 0 && $queryTriggers->num_rows() == 0 ) return [];
+
+        //MERGE ARRAYS ( THEY HAVE THE SAME STRUCTURE )
+        $rutines = array_merge($queryProcedures->result_object(),$queryFunctions->result_object());
+
+        foreach ($rutines as $r) {
+            //GET ALL INFO ABOUT RUTINE
+            $query = $this->ci->db_master->query("SHOW CREATE {$r->Type} {$r->Name}");
+            if( $query->num_rows() == 0) continue;
+            $query = $query->row_object();
+            $type = ucfirst(strtolower($r->Type));
+            //REPLACING HOST AND USER TO GET THE NAME OF THE PROCEDURE
+            $upStmt = str_replace("'",'"',preg_replace("#DEFINER=`(.+)`@`(.+)\.(.+)\.(.+)\.(.+)` #",'',$query->{"Create {$type}"}));
+            $this->stmts['up'][] = $upStmt;
+            //DOWN STATEMENT
+            $downStmt = "DROP {$r->Type} IF EXISTS {$r->Name}";
+            $this->stmts['down'][] = $downStmt;
+        }
+
+        foreach ($queryTriggers->result_object() as $trigger) {
+            
+            $upStmt = "CREATE TRIGGER {$trigger->Trigger} {$trigger->Timing} {$trigger->Event} ON `{$trigger->Table}` FOR EACH ROW {$trigger->Statement}";
+            $upStmt = str_replace("'",'"',$upStmt);
+            $this->stmts['up'][] = $upStmt;
+            $downStmt = "DROP TRIGGER IF EXISTS {$trigger->Trigger}";
+            $this->stmts['down'][] = $downStmt;
+        }
+        return null;
+    }
+
+     /**
+     * generateKeys
+     *  generate the keys of the tables
+     * @return null 
+     */
+    private function generateKeys()
+    {
+        $queryUnique = $this->ci->db_master->query('select concat("ALTER TABLE ", TABLE_NAME," ADD CONSTRAINT ",INDEX_NAME ," UNIQUE (",group_concat(COLUMN_NAME ORDER BY SEQ_IN_INDEX),")") as query from information_schema.STATISTICS where INDEX_NAME!="PRIMARY" and NON_UNIQUE=0 and TABLE_SCHEMA=(SELECT DATABASE())  group by TABLE_NAME,INDEX_NAME order by TABLE_NAME,INDEX_NAME;')->result_object();
+
+        $queryForeign = $this->ci->db_master->query('select TABLE_NAME as id, CONCAT("ALTER TABLE ",TABLE_NAME," ADD CONSTRAINT ", CONSTRAINT_NAME," FOREIGN KEY (",COLUMN_NAME ,") REFERENCES ",REFERENCED_TABLE_NAME,"(",REFERENCED_COLUMN_NAME,")") as query
+        from information_schema.key_column_usage
+        WHERE CONSTRAINT_SCHEMA= (SELECT DATABASE()) AND CONSTRAINT_NAME IN (select CONSTRAINT_NAME
+        from information_schema.TABLE_CONSTRAINTS
+        where table_name in (SELECT TABLE_NAME 
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_TYPE = "BASE TABLE") AND CONSTRAINT_SCHEMA= (SELECT DATABASE()) AND CONSTRAINT_TYPE ="FOREIGN KEY" );
+        ')->result_object();
+
+        $tables = array_map(fn($t) => "'{$t->id}'", $queryForeign);
+        $tables_string = implode(', ', $tables);
+
+        $queryIndexes = $this->ci->db_master->query("SELECT CONCAT('CREATE INDEX ',INDEX_NAME,' ON ',TABLE_NAME,' (',COLUMN_NAME,')') as query
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = (SELECT DATABASE()) AND INDEX_NAME != 'PRIMARY' AND INDEX_NAME NOT IN (select CONSTRAINT_NAME
+        from information_schema.TABLE_CONSTRAINTS
+        where table_name in ({$tables_string}) AND CONSTRAINT_SCHEMA= (SELECT DATABASE()) AND CONSTRAINT_TYPE ='FOREIGN KEY') AND INDEX_NAME NOT IN (SELECT DISTINCT INDEX_NAME from information_schema.STATISTICS where INDEX_NAME!='PRIMARY' and NON_UNIQUE=0 and TABLE_SCHEMA=(SELECT DATABASE()))")->result_object();
+
+        $stmts = [];
+        foreach ( ['Unique', 'Foreign', 'Indexes'] as $value) {
+            $varName = "query{$value}";
+            $temp_array = array_map(fn($t) => $t->query, $$varName);
+            $stmts = array_merge($stmts, $temp_array);
+        }
+        $this->stmts['up'] = $stmts;
+        return;
+    }
+
+    /**
+     * getMigrationType
+     *  Returns the migration type for naming purposes;
+     * @return string timestamp|sequential
+     */
+    private function getMigrationType()
+    {
+        $this->ci->config->load('migration');
+        return $this->ci->config->item('migration_type') ?? 'timestamp';
+    }
 }
 
 ?>
